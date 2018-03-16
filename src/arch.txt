@@ -1,9 +1,0 @@
-TcpStream
-|
-+->Listener: handle raw frames and format them in nice structs
-
-+-----+
-|Logic| Receives struct on message queues and forwards/react to them
-+-----+
-
-Writer: receives structs and formats them for sending on the tcpstream
