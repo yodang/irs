@@ -8,6 +8,7 @@ use std::sync::Arc;
 use std::sync::Mutex;
 use std::thread;
 use std::io::{Read, Write, Result};
+use std::io::stdin;
 use std::str::FromStr;
 use resolve::resolver;
 use mio::net::TcpStream;
@@ -21,6 +22,17 @@ use ircframe::IrcFrame;
 
 static SERVER_HOST: &'static str = "irc.iiens.net";
 static SERVER_PORT: u16 = 6666;
+
+
+fn writer(s: Arc<Mutex<IrcStream>>)
+{
+    loop {
+        let mut line=String::new();
+        stdin().read_line(&mut line);
+        line.push_str("\r\n");
+        s.lock().unwrap().write_all(&line.into_bytes());
+    }
+}
 
 fn main() {
     let resolved: std::net::IpAddr=resolver::resolve_host(SERVER_HOST).unwrap_or_else(|_|panic!("Could not resolve")).last().unwrap();
@@ -77,6 +89,8 @@ fn main() {
                 }
             }
         }
-    }).join();
+    });
+    let tx_stream=shared_stream.clone();
+    thread::spawn(move || writer(tx_stream)).join();
 }
 
