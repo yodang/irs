@@ -1,54 +1,40 @@
-extern crate pancurses;
+extern crate tui;
+extern crate termion;
 
-use pancurses::{initscr,endwin,noecho,Input};
-use std::vec::Vec;
-use std::iter::Iterator;
+use termion::event;
 
-fn print_log(window: &pancurses::Window, buf: &Vec<String>)
+use tui::Terminal;
+use tui::backend::RawBackend;
+use tui::widgets::{Widget, Block, Borders, List, Item, Paragraph};
+use tui::layout::{Group, Size, Direction};
+use std::io;
+
+fn draw_ui(term: &mut Terminal<RawBackend>) -> Result<(), io::Error>
 {
-    let mut cur_y=window.get_max_y()-2;
-    //cur_y=cur_y-2;
-    for line in buf.iter().rev()
-    {
-        window.mv(cur_y, 0);
-        window.clrtoeol();
-        window.printw(line);
-        cur_y=cur_y-1;
-        if cur_y==0
+    let size=term.size()?;
+    term.clear()?;
+
+    Group::default()
+        .direction(Direction::Vertical)
+        .sizes(&[Size::Min(0), Size::Fixed(1)])
+        .render(term, &size, |t, chunks|
         {
-            break;
-        }
-    }
+            List::new(vec![Item::Data("chat window"), Item::Data("another line  ")].into_iter())
+                .render(t, &chunks[0]);
+            Paragraph::default()
+                .text("> ")
+                .render(t, &chunks[1]);
+        });
+    term.draw()?;
+    Ok(())
 }
 
-fn main() {
-    let window = initscr();
-    let prompt_y=window.get_max_y()-1;
-    let prompt="> ";
-    window.printw("Hello curses!");
-    window.mvprintw(prompt_y, 0, prompt);
-    window.refresh();
-    window.keypad(true);
-    noecho();
-    let mut buf:Vec<String> = Vec::new();
-    let mut input:String="".to_owned();
-    loop {
-      match window.getch() {
-          Some(Input::Character('\n')) => {
-              buf.push(input);
-              input="".to_owned();
-              print_log(&window, &buf);
-              window.mvprintw(prompt_y, 0, prompt); 
-              window.clrtoeol(); 
-            }
-          Some(Input::Character(c)) => {
-              window.addch(c); 
-              input.push(c); 
-            },
-          Some(Input::KeyDC) => break,
-          Some(input_str) => { window.addstr(&format!("{:?}", input_str)); },
-          None => ()
-      }
-  }
-    endwin();
+fn main() -> Result<(), io::Error>
+{
+    let backend=RawBackend::new().unwrap();
+    let mut term=Terminal::new(backend).unwrap();
+
+    draw_ui(&mut term)?;
+    
+    Ok(())
 }

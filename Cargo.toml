@@ -4,4 +4,4 @@ version = "0.1.0"
 authors = ["yodang <yoda@elmekia.fr>"]
 
 [dependencies]
-pancurses = "0.15.0"
+tui = "0.2.0"
