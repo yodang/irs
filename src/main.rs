@@ -1,18 +1,24 @@
 extern crate bytes;
 extern crate resolve;
 extern crate mio;
+extern crate cursive;
 
 use std::net::SocketAddr;
 use std::sync::mpsc;
 use std::sync::Arc;
 use std::sync::Mutex;
 use std::thread;
-use std::io::{Read, Write, Result};
+use std::io::{Read, Write};
 use std::io::stdin;
 use std::str::FromStr;
+use std::collections::VecDeque;
 use resolve::resolver;
 use mio::net::TcpStream;
 use mio::{Events, Ready, Poll, PollOpt, Token};
+use cursive::Cursive;
+use cursive::view::View;
+use cursive::traits::Identifiable;
+use cursive::views::*;
 
 mod ircstream;
 use ircstream::IrcStream;
@@ -23,6 +29,32 @@ use ircframe::IrcFrame;
 static SERVER_HOST: &'static str = "irc.iiens.net";
 static SERVER_PORT: u16 = 6666;
 
+struct BufferView {
+    content: VecDeque<String>,
+    rx: mpsc::Receiver<String>
+}
+
+impl BufferView
+{
+    fn new(size: usize, rx: mpsc::Receiver<String>) -> Self
+    {
+        let mut content=VecDeque::new();
+        content.resize(size, String::default());
+        BufferView{
+            content,
+            rx
+        }
+    }
+
+    fn update(&mut self)
+    {
+        while let Ok(line) = self.rx.try_recv()
+        {
+            self.content.push_back(line);
+            self.content.pop_front();
+        }
+    }
+}
 
 fn writer(s: Arc<Mutex<IrcStream>>)
 {
@@ -34,7 +66,58 @@ fn writer(s: Arc<Mutex<IrcStream>>)
     }
 }
 
-fn main() {
+impl View for BufferView
+{
+    fn layout(&mut self, _: cursive::vec::Vec2)
+    {
+        self.update();
+    }
+
+    fn draw(&self, printer: &cursive::Printer)
+    {
+        for (i, line) in self.content.iter().rev().take(printer.size.y).enumerate()
+        {
+            printer.print((0, printer.size.y - (i+1)), line);
+        }
+    }
+}
+
+fn input_cb(tx: &mpsc::Sender<String>, ctx: &mut Cursive, input: &str)
+{
+    match input
+    {
+        "/quit" => ctx.quit(),
+        _ => 
+        {
+            tx.send(input.to_owned());
+            ctx.find_id::<EditView>("input").unwrap().set_content("");
+        }
+    }
+}
+
+fn main() -> Result<(), std::io::Error>
+{
+    let mut context=Cursive::default();
+    let mut layout=LinearLayout::vertical();
+    let (tx, rx)=std::sync::mpsc::channel();
+
+    context.add_global_callback('q', Cursive::quit);
+    layout.add_child(BoxView::with_full_screen(
+        BufferView::new(100, rx).with_id("text")
+    ));
+    layout.add_child(EditView::new()
+        .on_submit_mut(move |ctx, i| input_cb(&tx, ctx, i))
+        .with_id("input")
+    );
+
+    context.add_layer(Panel::new(layout));
+
+    context.run();
+
+    Ok(())
+}
+
+fn main_old() {
     let resolved: std::net::IpAddr=resolver::resolve_host(SERVER_HOST).unwrap_or_else(|_|panic!("Could not resolve")).last().unwrap();
     let stream=IrcStream::new(TcpStream::connect(&SocketAddr::new(resolved, SERVER_PORT)).unwrap());
 
