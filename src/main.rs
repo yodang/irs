@@ -1,40 +1,75 @@
-extern crate tui;
-extern crate termion;
+extern crate cursive;
 
-use termion::event;
+use std::collections::VecDeque;
 
-use tui::Terminal;
-use tui::backend::RawBackend;
-use tui::widgets::{Widget, Block, Borders, List, Item, Paragraph};
-use tui::layout::{Group, Size, Direction};
-use std::io;
+use cursive::Cursive;
+use cursive::view::View;
+use cursive::traits::Identifiable;
+use cursive::views::*;
 
-fn draw_ui(term: &mut Terminal<RawBackend>) -> Result<(), io::Error>
-{
-    let size=term.size()?;
-    term.clear()?;
-
-    Group::default()
-        .direction(Direction::Vertical)
-        .sizes(&[Size::Min(0), Size::Fixed(1)])
-        .render(term, &size, |t, chunks|
-        {
-            List::new(vec![Item::Data("chat window"), Item::Data("another line  ")].into_iter())
-                .render(t, &chunks[0]);
-            Paragraph::default()
-                .text("> ")
-                .render(t, &chunks[1]);
-        });
-    term.draw()?;
-    Ok(())
+struct BufferView {
+    content: VecDeque<String>
 }
 
-fn main() -> Result<(), io::Error>
+impl BufferView
 {
-    let backend=RawBackend::new().unwrap();
-    let mut term=Terminal::new(backend).unwrap();
+    fn new() -> Self
+    {
+        BufferView{
+            content: VecDeque::default()
+        }
+    }
 
-    draw_ui(&mut term)?;
-    
+    fn add_content(&mut self, line: &str)
+    {
+        self.content.push_back(line.to_owned());
+    }
+}
+
+impl View for BufferView
+{
+    fn draw(&self, printer: &cursive::Printer)
+    {
+        for (i, line) in self.content.iter().rev().take(printer.size.y).enumerate()
+        {
+            printer.print((0, printer.size.y - (i+1)), line);
+        }
+    }
+}
+
+fn input_cb(ctx: &mut Cursive, input: &str)
+{
+    match input
+    {
+        "/quit" => ctx.quit(),
+        _ => 
+        {
+            ctx.find_id::<BufferView>("text").unwrap().add_content(input);
+            ctx.find_id::<EditView>("input").unwrap().set_content("");
+        }
+    }
+}
+
+fn main() -> Result<(), std::io::Error>
+{
+    let mut context=Cursive::default();
+    let mut layout=LinearLayout::vertical();
+
+    context.add_global_callback('q', Cursive::quit);
+    layout.add_child(BoxView::with_full_screen(
+        BufferView::new().with_id("text")
+    ));
+    layout.add_child(EditView::new()
+        .on_submit_mut(input_cb)
+        .with_id("input")
+    );
+
+    //context.find_id::<BufferView>("text").unwrap().add_content("Hello World");
+
+    context.add_layer(
+        Panel::new(layout)
+    );
+
+    context.run();
     Ok(())
 }

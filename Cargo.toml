@@ -4,4 +4,4 @@ version = "0.1.0"
 authors = ["yodang <yoda@elmekia.fr>"]
 
 [dependencies]
-tui = "0.2.0"
+cursive = "0.8"
