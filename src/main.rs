@@ -31,17 +31,20 @@ static SERVER_PORT: u16 = 6666;
 
 struct BufferView {
     content: VecDeque<String>,
+    tx: mpsc::Sender<String>,
     rx: mpsc::Receiver<String>
 }
 
 impl BufferView
 {
-    fn new(size: usize, rx: mpsc::Receiver<String>) -> Self
+    fn new(size: usize) -> Self
     {
         let mut content=VecDeque::new();
+        let (tx, rx)=mpsc::channel();
         content.resize(size, String::default());
         BufferView{
             content,
+            tx,
             rx
         }
     }
@@ -54,15 +57,10 @@ impl BufferView
             self.content.pop_front();
         }
     }
-}
 
-fn writer(s: Arc<Mutex<IrcStream>>)
-{
-    loop {
-        let mut line=String::new();
-        stdin().read_line(&mut line);
-        line.push_str("\r\n");
-        s.lock().unwrap().write_all(&line.into_bytes());
+    fn get_tx(&self) -> mpsc::Sender<String>
+    {
+        self.tx.clone()
     }
 }
 
@@ -82,14 +80,25 @@ impl View for BufferView
     }
 }
 
-fn input_cb(tx: &mpsc::Sender<String>, ctx: &mut Cursive, input: &str)
+fn input_cb(tx: &mpsc::Sender<String>, ctx: &mut Cursive, input: &str, streams: &mut Vec<Arc<Mutex<IrcStream>>>)
 {
     match input
     {
+        "/connect" => 
+        {
+            streams.push(
+                connect(SERVER_HOST, ctx.find_id::<BufferView>("text").unwrap().get_tx()).unwrap()
+            );
+            ctx.find_id::<EditView>("input").unwrap().set_content("");
+        },
         "/quit" => ctx.quit(),
         _ => 
         {
-            tx.send(input.to_owned());
+            ctx.find_id::<BufferView>("text").unwrap().get_tx().send(input.to_owned());
+            if streams.len()!=0
+            {
+                streams[0].lock().unwrap().write_all(&format!("{}\r\n", input).into_bytes());
+            }
             ctx.find_id::<EditView>("input").unwrap().set_content("");
         }
     }
@@ -100,13 +109,16 @@ fn main() -> Result<(), std::io::Error>
     let mut context=Cursive::default();
     let mut layout=LinearLayout::vertical();
     let (tx, rx)=std::sync::mpsc::channel();
+    let mut streams = Vec::default();
+
+    context.set_fps(10);
 
     context.add_global_callback('q', Cursive::quit);
     layout.add_child(BoxView::with_full_screen(
-        BufferView::new(100, rx).with_id("text")
+        BufferView::new(100).with_id("text")
     ));
     layout.add_child(EditView::new()
-        .on_submit_mut(move |ctx, i| input_cb(&tx, ctx, i))
+        .on_submit_mut(move |ctx, i| input_cb(&tx, ctx, i, &mut streams))
         .with_id("input")
     );
 
@@ -117,15 +129,15 @@ fn main() -> Result<(), std::io::Error>
     Ok(())
 }
 
-fn main_old() {
-    let resolved: std::net::IpAddr=resolver::resolve_host(SERVER_HOST).unwrap_or_else(|_|panic!("Could not resolve")).last().unwrap();
+fn connect(host: &str, tx: mpsc::Sender<String>) -> Result<Arc<Mutex<IrcStream>>, std::io::Error> {
+    let resolved: std::net::IpAddr=resolver::resolve_host(host).unwrap_or_else(|_|panic!("Could not resolve")).last().unwrap();
     let stream=IrcStream::new(TcpStream::connect(&SocketAddr::new(resolved, SERVER_PORT)).unwrap());
 
     let poller=Poll::new().unwrap();
 
     let LISTENER=Token::from(1);
 
-    poller.register(&stream, LISTENER, Ready::readable()|Ready::writable(), PollOpt::edge());
+    poller.register(&stream, LISTENER, Ready::readable()|Ready::writable(), PollOpt::edge())?;
 
     let shared_stream=Arc::new(Mutex::new(stream));
     let rx_stream=shared_stream.clone();
@@ -148,13 +160,13 @@ fn main_old() {
                         //println!("Received (writable {}): {}", e.readiness().is_writable(), data);
                         for line in stream.read_frames().unwrap()
                         {
-                            println!("Received: {:?}", IrcFrame::from_str(&line));
+                            tx.send(format!("Received: {:?}", IrcFrame::from_str(&line)));
                             if line.starts_with("PING")
                             {
                                 let mut pong="PONG :".to_owned();
                                 pong.push_str(line.split(":").last().unwrap());
                                 pong.push_str("\r\n");
-                                println!("Send: {}", pong);
+                                tx.send(format!("Send: {}", pong));
                                 stream.write_all(&pong.into_bytes());
                             }
                         }
@@ -162,10 +174,10 @@ fn main_old() {
                     (_, true, Token(1)) =>
                     {
                         let nick="NICK Yooda \r\n".to_owned();
-                        println!("Send: {}", nick);
+                        tx.send(format!("Send: {}", nick));
                         stream.write_all(&nick.into_bytes());
                         let user="USER guest 0 * :guest\r\n".to_owned();
-                        println!("Send: {}", user);
+                        tx.send(format!("Send: {}", user));
                         stream.write_all(&user.into_bytes());
                     }
                     _ => {println!("Unhandled event {:?}", e);}
@@ -173,7 +185,7 @@ fn main_old() {
             }
         }
     });
-    let tx_stream=shared_stream.clone();
-    thread::spawn(move || writer(tx_stream)).join();
+
+    Ok(shared_stream.clone())
 }
 
